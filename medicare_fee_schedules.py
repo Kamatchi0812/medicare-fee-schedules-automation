@@ -32,6 +32,15 @@ APPROVED_URLS = {
         "DMEPOS",
 }
 
+DMEPOS_KEY_FIELDS = (
+    "HCPCS_CODE",
+    "MODIFIER",
+    "JURISDICTION",
+    "CATEGORY",
+    "REGION",
+    "STATE",
+)
+
 BASE_DIR = Path(__file__).resolve().parent
 DOWNLOAD_DIR = BASE_DIR / "downloaded_files"
 OUTPUT_DIR = BASE_DIR / "output"
@@ -706,6 +715,11 @@ def choose_txt_files(txt_files: list[Path], schedule: str) -> list[Path]:
     return text_files or relevant
 
 
+def choose_dmepos_txt_files(txt_files: Iterable[Path]) -> list[Path]:
+    """Select the core DMEPOS fee schedule, excluding separate supplemental files."""
+    return [path for path in txt_files if path.stem.upper().startswith("DMEPOS")]
+
+
 def is_relevant_data_file(path: Path) -> bool:
     name = path.name.lower()
     ignored_terms = (
@@ -809,20 +823,27 @@ def parse_txt_file(txt_path: Path, field_specs: list[FieldSpec],
     return header, records
 
 
-def composite_key(row: dict[str, str], hcpcs_column: str) -> tuple[str, ...]:
-    """Return HCPCS alone as the unique record key."""
+def composite_key(
+    row: dict[str, str],
+    hcpcs_column: str,
+    key_fields: Optional[tuple[str, ...]] = None,
+) -> tuple[str, ...]:
+    """Return an HCPCS-based key, optionally including record dimensions."""
+    if key_fields:
+        return tuple(str(row.get(field, "")).strip().upper() for field in key_fields)
     return (str(row.get(hcpcs_column, "")).strip().upper(),)
 
 
 def quarterly_update(existing: list[dict[str, str]],
-                     records: Iterable[dict[str, str]]) -> tuple[
+                     records: Iterable[dict[str, str]],
+                     key_fields: Optional[tuple[str, ...]] = None) -> tuple[
                          list[dict[str, str]], int, int, int]:
-    """Merge records by HCPCS, updating an existing code instead of duplicating it."""
+    """Merge matching records, updating existing rows instead of duplicating them."""
     result: dict[tuple[str, ...], dict[str, str]] = {}
     for row in existing:
         hcpcs_column = find_hcpcs_column(list(row))
         if hcpcs_column and str(row.get(hcpcs_column, "")).strip():
-            result[composite_key(row, hcpcs_column)] = dict(row)
+            result[composite_key(row, hcpcs_column, key_fields)] = dict(row)
         else:
             result[(str(row),)] = dict(row)
 
@@ -833,7 +854,7 @@ def quarterly_update(existing: list[dict[str, str]],
         hcpcs_column = find_hcpcs_column(list(row))
         if not hcpcs_column or not str(row.get(hcpcs_column, "")).strip():
             continue
-        key = composite_key(row, hcpcs_column)
+        key = composite_key(row, hcpcs_column, key_fields)
         old = result.get(key)
         if old is None:
             result[key] = dict(row)
@@ -915,6 +936,10 @@ def process_selected_schedule(schedule: str, page_url: str) -> Path:
     }
     output_path = OUTPUT_DIR / filenames[schedule]
     consolidated = read_existing_csv(output_path)
+    if schedule == "DMEPOS":
+        if consolidated:
+            print("  Rebuilding DMEPOS output using complete record keys.")
+        consolidated = []
     if schedule == "CLFS" and consolidated:
         first_row = consolidated[0]
         if (
@@ -1018,15 +1043,11 @@ def process_selected_schedule(schedule: str, page_url: str) -> Path:
                     failed_quarters.append(release.name)
                     continue
 
-                dme_txt_files = [
-                    path for path in txt_files
-                    if is_relevant_data_file(path)
-                    and path.suffix.lower() in {".txt", ".dat"}
-                ]
+                dme_txt_files = choose_dmepos_txt_files(txt_files)
                 if not dme_txt_files:
                     print(
-                        f"Quarter {release.name}: no TXT or DAT data files found after "
-                        "recursive extraction"
+                        f"Quarter {release.name}: no core DMEPOS TXT files found "
+                        "after recursive extraction"
                     )
                     failed_quarters.append(release.name)
                     continue
@@ -1081,7 +1102,7 @@ def process_selected_schedule(schedule: str, page_url: str) -> Path:
                     continue
 
                 consolidated, new_count, updated_count, skipped_count = quarterly_update(
-                    consolidated, quarter_rows
+                    consolidated, quarter_rows, key_fields=DMEPOS_KEY_FIELDS
                 )
                 total_records += len(quarter_rows)
                 total_new += new_count

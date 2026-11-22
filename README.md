@@ -11,6 +11,8 @@ Python utility for downloading, parsing, and consolidating Medicare fee schedule
   - `DMEPOS_fee_schedule.csv`
   - `Physician_NonQP_fee_schedule.csv`
 
+The DMEPOS CSV contains core DMEPOS fee schedule records. Separate PEN, Former CBA, and rural ZIP files are not merged into it.
+
 The CSVs are snapshots and may not reflect the latest CMS releases. Run the utility to retrieve and process current releases.
 
 ## Requirements
