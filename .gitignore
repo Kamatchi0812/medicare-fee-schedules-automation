@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+
+/cache/
+/downloaded_files/
+/test*.zip
